@@ -10,52 +10,58 @@
   header { padding: 12px 16px; background: #1a1a1a; border-bottom: 1px solid #333; }
   h1 { margin: 0; font-size: 18px; }
   .container { max-width: 900px; margin: 0 auto; padding: 16px; }
-  video { width: 100%; max-height: 50vh; background: #000; border-radius: 8px; }
+  .stage { position: relative; background: #000; border-radius: 8px; overflow: hidden; }
+  video { display: block; width: 100%; max-height: 60vh; background: #000; }
+  .subtitle-overlay {
+    position: absolute; left: 0; right: 0; bottom: 14%;
+    display: flex; justify-content: center; pointer-events: none; padding: 0 5%;
+  }
+  .subtitle-overlay span {
+    display: inline-block; max-width: 100%; text-align: center; line-height: 1.3;
+    padding: 4px 12px; border-radius: 6px; white-space: pre-wrap;
+  }
   .controls { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; align-items: center; }
   input[type="file"] { color: #aaa; }
-  button, select, input[type="color"], input[type="number"], input[type="text"] {
+  button, select, input[type="color"], input[type="number"] {
     padding: 8px 12px; border-radius: 6px; border: 1px solid #444; background: #222; color: #fff;
   }
   button { cursor: pointer; background: #e2c14a; color: #111; font-weight: 600; border: none; }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
-  .subtitle-preview { position: relative; margin-top: 8px; }
-  .subtitle-overlay {
-    position: absolute; bottom: 12%; left: 0; right: 0;
-    text-align: center; pointer-events: none; padding: 0 20px;
-    text-shadow: 0 0 4px #000, 0 0 8px #000; line-height: 1.3;
-  }
-  .editor { margin-top: 16px; }
-  .editor textarea {
-    width: 100%; height: 180px; background: #1a1a1a; color: #eee;
-    border: 1px solid #444; border-radius: 6px; padding: 10px; font-family: monospace; font-size: 14px;
-  }
   .row { display: flex; gap: 12px; flex-wrap: wrap; margin: 10px 0; align-items: center; }
   .row label { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+  .editor textarea {
+    width: 100%; height: 220px; background: #1a1a1a; color: #eee;
+    border: 1px solid #444; border-radius: 6px; padding: 10px; font-family: monospace; font-size: 14px;
+  }
   .status { margin-top: 10px; font-size: 14px; color: #aaa; min-height: 20px; }
+  progress { width: 100%; height: 8px; display: none; }
 </style>
 </head>
 <body>
-<header>
-  <h1>Subtitrare Video — Română (Auto)</h1>
-</header>
+<header><h1>Subtitrare Video — Română (Whisper în browser)</h1></header>
 
 <div class="container">
   <div class="controls">
-    <input type="file" id="fileInput" accept="video/*">
-    <button id="btnTranscribe">Transcrie automat (RO)</button>
-    <button id="btnLoadDemo">Încarcă exemplu</button>
+    <input type="file" id="fileInput" accept="video/*,audio/*">
+    <select id="model">
+      <option value="Xenova/whisper-base">Whisper base (rapid)</option>
+      <option value="Xenova/whisper-small" selected>Whisper small (mai precis)</option>
+    </select>
+    <button id="btnTranscribe" disabled>Transcrie automat (RO)</button>
+    <button id="btnDemo">Încarcă exemplu</button>
   </div>
+  <progress id="progress" max="100" value="0"></progress>
 
-  <div class="subtitle-preview">
+  <div class="stage" id="stage">
     <video id="video" controls playsinline></video>
-    <div id="subtitleOverlay" class="subtitle-overlay"></div>
+    <div class="subtitle-overlay"><span id="sub" style="visibility:hidden"></span></div>
   </div>
 
   <div class="row">
     <label>Culoare text <input type="color" id="textColor" value="#ffffff"></label>
     <label>Culoare fundal <input type="color" id="bgColor" value="#000000"></label>
     <label>Transparență <input type="range" id="bgOpacity" min="0" max="100" value="40"></label>
-    <label>Mărime <input type="number" id="fontSize" value="28" min="14" max="72" style="width:70px"></label>
+    <label>Mărime <input type="number" id="fontSize" value="24" min="10" max="72" style="width:70px"></label>
     <label>Font
       <select id="fontFamily">
         <option value="Arial, sans-serif">Arial</option>
@@ -68,257 +74,306 @@
   </div>
 
   <div class="editor">
-    <p style="margin:0 0 6px; font-size:14px;">Subtitrări (editează dacă e nevoie)</p>
-    <textarea id="subtitleText" placeholder="Apasă „Transcrie automat” sau scrie manual:&#10;00:00:01.000 --> 00:00:04.000 | Text aici"></textarea>
+    <p style="margin:0 0 6px; font-size:14px;">Subtitrări (format SRT, editabile; se acceptă și <code>00:00:01.000 --> 00:00:04.000 | Text</code>)</p>
+    <textarea id="subtitleText" spellcheck="false"></textarea>
   </div>
 
-  <div class="controls" style="margin-top:12px">
-    <button id="btnApply">Aplică stil & preview</button>
+  <div class="controls">
+    <button id="btnApply">Aplică</button>
     <button id="btnDownloadSRT">Descarcă .SRT</button>
-    <button id="btnExportVideo" disabled>Export video cu subtitrări</button>
+    <button id="btnExport" disabled>Export video cu subtitrări (.webm)</button>
+    <input type="file" id="srtInput" accept=".srt,.vtt,.txt">
   </div>
   <div class="status" id="status"></div>
 </div>
 
-<script>
-const video = document.getElementById('video');
-const overlay = document.getElementById('subtitleOverlay');
-const fileInput = document.getElementById('fileInput');
-const subtitleText = document.getElementById('subtitleText');
-const textColor = document.getElementById('textColor');
-const bgColor = document.getElementById('bgColor');
-const bgOpacity = document.getElementById('bgOpacity');
-const fontSize = document.getElementById('fontSize');
-const fontFamily = document.getElementById('fontFamily');
-const statusEl = document.getElementById('status');
-const btnExport = document.getElementById('btnExportVideo');
-const btnTranscribe = document.getElementById('btnTranscribe');
+<script type="module">
+const $ = id => document.getElementById(id);
+const video = $('video'), sub = $('sub'), fileInput = $('fileInput');
+const subtitleText = $('subtitleText'), statusEl = $('status');
+const btnTranscribe = $('btnTranscribe'), btnExport = $('btnExport'), progress = $('progress');
+const textColor = $('textColor'), bgColor = $('bgColor'), bgOpacity = $('bgOpacity');
+const fontSize = $('fontSize'), fontFamily = $('fontFamily');
 
 let cues = [];
-let recognition = null;
+let currentFile = null;
+let exporting = false;
 
+/* ---------- timp ---------- */
 function parseTime(t) {
-  const parts = t.trim().split(':');
-  if (parts.length === 3) {
-    const [h, m, s] = parts;
-    return parseFloat(h)*3600 + parseFloat(m)*60 + parseFloat(s);
-  }
-  return 0;
+  const p = t.trim().replace(',', '.').split(':').map(parseFloat);
+  if (p.some(isNaN)) return 0;
+  if (p.length === 3) return p[0]*3600 + p[1]*60 + p[2];
+  if (p.length === 2) return p[0]*60 + p[1];
+  return p[0] || 0;
+}
+function fmt(sec, comma = true) {
+  sec = Math.max(0, sec);
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60), ms = Math.round((sec % 1) * 1000);
+  const base = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  return base + (comma ? ',' : '.') + String(ms).padStart(3, '0');
 }
 
+/* ---------- parsare / serializare ---------- */
 function parseSubtitles(text) {
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-  const result = [];
-  for (const line of lines) {
-    const match = line.match(/^(.+?)\s*-->\s*(.+?)\s*\|\s*(.+)$/);
-    if (match) {
-      result.push({
-        start: parseTime(match[1]),
-        end: parseTime(match[2]),
-        text: match[3]
-      });
-    }
+  const out = [];
+  text = text.replace(/\r/g, '').replace(/^WEBVTT.*\n/, '');
+  // format cu |
+  const pipeRe = /^(.+?)\s*-->\s*(.+?)\s*\|\s*(.+)$/;
+  const blocks = text.split(/\n\s*\n/);
+  for (const block of blocks) {
+    const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+    if (!lines.length) continue;
+    if (lines.length === 1 && pipeRe.test(lines[0])) continue; // tratat mai jos
+    const idx = lines.findIndex(l => l.includes('-->'));
+    if (idx === -1) continue;
+    const m = lines[idx].match(/^(.+?)\s*-->\s*(\S+)/);
+    const txt = lines.slice(idx + 1).join('\n');
+    if (m && txt) out.push({ start: parseTime(m[1]), end: parseTime(m[2]), text: txt });
   }
-  return result;
+  // linii individuale cu |
+  for (const line of text.split('\n')) {
+    const m = line.trim().match(pipeRe);
+    if (m) out.push({ start: parseTime(m[1]), end: parseTime(m[2]), text: m[3].trim() });
+  }
+  return out.sort((a, b) => a.start - b.start);
+}
+function toSRT(list) {
+  return list.map((c, i) => `${i+1}\n${fmt(c.start)} --> ${fmt(c.end)}\n${c.text}\n`).join('\n');
 }
 
-function formatTime(seconds) {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = (seconds % 60).toFixed(3);
-  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(6,'0')}`;
+/* ---------- stil + preview ---------- */
+function rgba() {
+  const h = bgColor.value;
+  return `rgba(${parseInt(h.slice(1,3),16)},${parseInt(h.slice(3,5),16)},${parseInt(h.slice(5,7),16)},${bgOpacity.value/100})`;
 }
-
 function applyStyle() {
-  overlay.style.color = textColor.value;
-  overlay.style.fontSize = fontSize.value + 'px';
-  overlay.style.fontFamily = fontFamily.value;
-  const op = bgOpacity.value / 100;
-  const hex = bgColor.value;
-  const r = parseInt(hex.slice(1,3),16);
-  const g = parseInt(hex.slice(3,5),16);
-  const b = parseInt(hex.slice(5,7),16);
-  overlay.style.background = `rgba(${r},${g},${b},${op})`;
-  overlay.style.padding = '6px 12px';
-  overlay.style.borderRadius = '6px';
-  overlay.style.display = 'inline-block';
-  overlay.style.maxWidth = '90%';
+  sub.style.color = textColor.value;
+  sub.style.fontSize = fontSize.value + 'px';
+  sub.style.fontFamily = fontFamily.value;
+  sub.style.background = rgba();
 }
-
 function updateOverlay() {
   const t = video.currentTime;
   const cue = cues.find(c => t >= c.start && t <= c.end);
-  overlay.textContent = cue ? cue.text : '';
-  overlay.style.visibility = cue ? 'visible' : 'hidden';
+  sub.textContent = cue ? cue.text : '';
+  sub.style.visibility = cue ? 'visible' : 'hidden';
 }
-
-fileInput.onchange = () => {
-  const file = fileInput.files[0];
-  if (!file) return;
-  video.src = URL.createObjectURL(file);
-  btnExport.disabled = false;
-  statusEl.textContent = 'Video încărcat. Poți încerca „Transcrie automat (RO)”.';
-};
-
-document.getElementById('btnLoadDemo').onclick = () => {
-  subtitleText.value = `00:00:01.000 --> 00:00:04.000 | Bună! Acesta este un exemplu.
-00:00:04.500 --> 00:00:08.000 | Poți edita textul, culoarea și mărimea.`;
-  applyAndPreview();
-};
-
 function applyAndPreview() {
   cues = parseSubtitles(subtitleText.value);
   applyStyle();
-  statusEl.textContent = cues.length ? `Am găsit ${cues.length} subtitrări.` : 'Nicio subtitrare validă.';
+  updateOverlay();
+  statusEl.textContent = cues.length ? `${cues.length} subtitrări valide.` : 'Nicio subtitrare validă.';
 }
+[textColor, bgColor, bgOpacity, fontSize, fontFamily].forEach(el => el.addEventListener('input', applyStyle));
+video.addEventListener('timeupdate', updateOverlay);
+video.addEventListener('seeked', updateOverlay);
+$('btnApply').onclick = applyAndPreview;
+subtitleText.addEventListener('change', applyAndPreview);
 
-document.getElementById('btnApply').onclick = applyAndPreview;
-
-video.ontimeupdate = updateOverlay;
-video.onseeked = updateOverlay;
-
-// === Transcriere automată (Web Speech API - română) ===
-btnTranscribe.onclick = async () => {
-  if (!video.src) {
-    statusEl.textContent = 'Încarcă mai întâi un video.';
-    return;
-  }
-
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    statusEl.textContent = 'Browserul tău nu suportă recunoaștere vocală. Folosește Chrome pe desktop.';
-    return;
-  }
-
-  statusEl.textContent = 'Se pregătește transcrierea... Pornește video-ul și vorbește clar (sau lasă audio-ul din clip).';
-  btnTranscribe.disabled = true;
-
-  recognition = new SpeechRecognition();
-  recognition.lang = 'ro-RO';
-  recognition.continuous = true;
-  recognition.interimResults = false;
-
-  let collected = [];
-  let startTime = 0;
-
-  recognition.onresult = (event) => {
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      if (event.results[i].isFinal) {
-        const text = event.results[i][0].transcript.trim();
-        if (text) {
-          const now = video.currentTime;
-          const duration = Math.max(2, text.length * 0.12); // estimare durată
-          collected.push({
-            start: Math.max(0, now - duration),
-            end: now,
-            text
-          });
-        }
-      }
-    }
-  };
-
-  recognition.onerror = (e) => {
-    statusEl.textContent = 'Eroare recunoaștere: ' + e.error;
-    btnTranscribe.disabled = false;
-  };
-
-  recognition.onend = () => {
-    if (collected.length) {
-      const lines = collected.map(c => 
-        `${formatTime(c.start)} --> ${formatTime(c.end)} | ${c.text}`
-      );
-      subtitleText.value = lines.join('\n');
-      applyAndPreview();
-      statusEl.textContent = `Transcriere gata: ${collected.length} fragmente. Editează dacă e nevoie.`;
-    } else {
-      statusEl.textContent = 'Nu s-a detectat vorbire. Încearcă din nou sau scrie manual.';
-    }
-    btnTranscribe.disabled = false;
-  };
-
-  // Pornește recunoașterea și video-ul
-  video.currentTime = 0;
-  video.play();
-  recognition.start();
-
-  // Oprește automat când video-ul se termină
-  video.onended = () => {
-    recognition.stop();
-  };
+/* ---------- fișiere ---------- */
+fileInput.onchange = () => {
+  const f = fileInput.files[0];
+  if (!f) return;
+  currentFile = f;
+  video.src = URL.createObjectURL(f);
+  btnTranscribe.disabled = false;
+  btnExport.disabled = false;
+  statusEl.textContent = 'Fișier încărcat. Apasă „Transcrie automat (RO)”.';
 };
-
-// Descărcare SRT
-document.getElementById('btnDownloadSRT').onclick = () => {
-  if (!cues.length) applyAndPreview();
+$('srtInput').onchange = async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  subtitleText.value = await f.text();
+  applyAndPreview();
+};
+$('btnDemo').onclick = () => {
+  subtitleText.value = `1\n00:00:01,000 --> 00:00:04,000\nBună! Acesta este un exemplu.\n\n2\n00:00:04,500 --> 00:00:08,000\nPoți edita textul, culoarea și mărimea.\n`;
+  applyAndPreview();
+};
+$('btnDownloadSRT').onclick = () => {
+  applyAndPreview();
   if (!cues.length) return;
-  let srt = '';
-  cues.forEach((c, i) => {
-    srt += `${i+1}\n`;
-    srt += `${formatTime(c.start).replace('.',',')} --> ${formatTime(c.end).replace('.',',')}\n`;
-    srt += `${c.text}\n\n`;
-  });
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([srt], { type: 'text/srt' }));
+  a.href = URL.createObjectURL(new Blob([toSRT(cues)], { type: 'text/plain;charset=utf-8' }));
   a.download = 'subtitrari_ro.srt';
   a.click();
-  statusEl.textContent = 'Fișier SRT descărcat.';
 };
 
-// Export video (simplificat)
-document.getElementById('btnExportVideo').onclick = async () => {
-  if (!video.src || !cues.length) {
-    statusEl.textContent = 'Încarcă video + subtitrări mai întâi.';
-    return;
+/* ---------- transcriere Whisper ---------- */
+let asr = null, asrModel = null;
+
+async function decodeAudio(file) {
+  const buf = await file.arrayBuffer();
+  const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+  const audio = await ctx.decodeAudioData(buf);
+  ctx.close();
+  if (audio.numberOfChannels === 1) return audio.getChannelData(0);
+  const a = audio.getChannelData(0), b = audio.getChannelData(1);
+  const mono = new Float32Array(a.length);
+  for (let i = 0; i < a.length; i++) mono[i] = (a[i] + b[i]) / 2;
+  return mono;
+}
+
+btnTranscribe.onclick = async () => {
+  if (!currentFile) return;
+  btnTranscribe.disabled = true;
+  progress.style.display = 'block';
+  progress.value = 0;
+  try {
+    const modelId = $('model').value;
+    if (!asr || asrModel !== modelId) {
+      statusEl.textContent = 'Se descarcă modelul Whisper (prima dată poate dura câteva minute)...';
+      const { pipeline } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3');
+      const files = {};
+      asr = await pipeline('automatic-speech-recognition', modelId, {
+        progress_callback: p => {
+          if (p.status === 'progress' && p.file) {
+            files[p.file] = p.progress || 0;
+            const vals = Object.values(files);
+            progress.value = vals.reduce((a, b) => a + b, 0) / vals.length;
+          }
+        }
+      });
+      asrModel = modelId;
+    }
+    progress.removeAttribute('value'); // indeterminat
+    statusEl.textContent = 'Se extrage audio...';
+    const audio = await decodeAudio(currentFile);
+    statusEl.textContent = 'Se transcrie... (rulează local, poate dura)';
+    const res = await asr(audio, {
+      language: 'romanian', task: 'transcribe',
+      return_timestamps: true, chunk_length_s: 30, stride_length_s: 5
+    });
+    const chunks = (res.chunks || []).filter(c => c.text && c.text.trim());
+    if (!chunks.length) {
+      statusEl.textContent = 'Nu s-a detectat vorbire.';
+    } else {
+      const list = chunks.map(c => {
+        const s = c.timestamp[0] ?? 0;
+        const e = c.timestamp[1] ?? (s + 2);
+        return { start: s, end: e, text: c.text.trim() };
+      });
+      subtitleText.value = toSRT(list);
+      applyAndPreview();
+      statusEl.textContent = `Transcriere gata: ${list.length} subtitrări. Editează dacă e nevoie.`;
+    }
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = 'Eroare la transcriere: ' + (err.message || err) +
+      ' (verifică conexiunea la internet și folosește Chrome/Edge actualizat)';
+  } finally {
+    progress.style.display = 'none';
+    btnTranscribe.disabled = false;
   }
-  statusEl.textContent = 'Export în curs... (poate dura)';
+};
+
+/* ---------- export video cu subtitrări + audio ---------- */
+let audioCtx = null, mediaSource = null, audioDest = null;
+
+function wrapLines(ctx, text, maxW) {
+  const out = [];
+  for (const para of text.split('\n')) {
+    let line = '';
+    for (const word of para.split(/\s+/)) {
+      const test = line ? line + ' ' + word : word;
+      if (line && ctx.measureText(test).width > maxW) { out.push(line); line = word; }
+      else line = test;
+    }
+    out.push(line);
+  }
+  return out;
+}
+
+btnExport.onclick = async () => {
+  applyAndPreview();
+  if (!video.src || !cues.length) { statusEl.textContent = 'Încarcă video + subtitrări mai întâi.'; return; }
+  if (!video.videoWidth) { statusEl.textContent = 'Fișierul nu are imagine video (e doar audio).'; return; }
+  if (exporting) return;
+  exporting = true;
   btnExport.disabled = true;
 
   const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
   const ctx = canvas.getContext('2d');
-  canvas.width = video.videoWidth || 1280;
-  canvas.height = video.videoHeight || 720;
+  const scale = canvas.width / (video.clientWidth || canvas.width); // același aspect ca în preview
+
+  // audio
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    mediaSource = audioCtx.createMediaElementSource(video);
+    audioDest = audioCtx.createMediaStreamDestination();
+    mediaSource.connect(audioCtx.destination);
+    mediaSource.connect(audioDest);
+  }
+  await audioCtx.resume();
+
   const stream = canvas.captureStream(30);
+  audioDest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
 
-  const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+  const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+    .find(m => MediaRecorder.isTypeSupported(m));
+  const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6_000_000 });
   const chunks = [];
-  recorder.ondataavailable = e => chunks.push(e.data);
+  recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
 
+  video.pause();
   video.currentTime = 0;
-  await new Promise(r => video.onseeked = r);
-  recorder.start();
-  video.play();
+  await new Promise(r => { video.addEventListener('seeked', r, { once: true }); });
+
+  let running = true;
+  const fs = parseFloat(fontSize.value) * scale;
+  const lh = fs * 1.3, padX = fs * 0.5, padY = fs * 0.3;
 
   function draw() {
-    if (video.paused || video.ended) return;
+    if (!running) return;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const cue = cues.find(c => video.currentTime >= c.start && video.currentTime <= c.end);
+    const t = video.currentTime;
+    const cue = cues.find(c => t >= c.start && t <= c.end);
     if (cue) {
-      ctx.font = `${fontSize.value}px ${fontFamily.value}`;
+      ctx.font = `${fs}px ${fontFamily.value}`;
       ctx.textAlign = 'center';
-      const op = bgOpacity.value / 100;
-      const hex = bgColor.value;
-      const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
-      ctx.fillStyle = `rgba(${r},${g},${b},${op})`;
-      const w = ctx.measureText(cue.text).width;
-      const y = canvas.height * 0.85;
-      ctx.fillRect(canvas.width/2 - w/2 - 16, y - fontSize.value, w + 32, fontSize.value + 16);
+      ctx.textBaseline = 'top';
+      const lines = wrapLines(ctx, cue.text, canvas.width * 0.88);
+      const w = Math.max(...lines.map(l => ctx.measureText(l).width));
+      const h = lines.length * lh;
+      const x = canvas.width / 2;
+      const top = canvas.height * 0.86 - h;
+      ctx.fillStyle = rgba();
+      ctx.beginPath();
+      ctx.roundRect(x - w/2 - padX, top - padY, w + padX*2, h + padY*2, fs * 0.25);
+      ctx.fill();
       ctx.fillStyle = textColor.value;
-      ctx.fillText(cue.text, canvas.width/2, y);
+      lines.forEach((l, i) => ctx.fillText(l, x, top + i * lh + (lh - fs) / 2));
     }
     requestAnimationFrame(draw);
   }
-  draw();
 
-  video.onended = () => recorder.stop();
-  recorder.onstop = () => {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob(chunks, { type: 'video/webm' }));
-    a.download = 'video_subtitrat.webm';
-    a.click();
-    statusEl.textContent = 'Export gata!';
-    btnExport.disabled = false;
-  };
+  const done = new Promise(resolve => {
+    const finish = () => { running = false; recorder.stop(); };
+    video.addEventListener('ended', finish, { once: true });
+    recorder.onstop = resolve;
+  });
+
+  recorder.start(500);
+  await video.play();
+  draw();
+  const tick = setInterval(() => {
+    statusEl.textContent = `Export în curs: ${Math.round(video.currentTime / video.duration * 100)}% (rulează în timp real, nu închide fila)`;
+  }, 500);
+
+  await done;
+  clearInterval(tick);
+
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(chunks, { type: 'video/webm' }));
+  a.download = 'video_subtitrat.webm';
+  a.click();
+  statusEl.textContent = 'Export gata! Fișierul .webm a fost descărcat.';
+  exporting = false;
+  btnExport.disabled = false;
 };
 
 applyStyle();
